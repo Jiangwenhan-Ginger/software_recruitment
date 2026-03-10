@@ -7,83 +7,107 @@ See README.md for full task description.
 
 import cv2
 import numpy as np
-from typing import Dict, List, Tuple
-
 
 class MarkerDetector:
-    """
-    Detects colored markers in images using classical computer vision techniques.
+    def __init__(self):
+        
+        self.min_area = 100 
+        
 
-    Each detection is a dictionary with the following fields:
-        - 'color':  str           — one of 'red', 'green', 'blue', 'yellow'
-        - 'bbox':   (x, y, w, h) — bounding rectangle of the detected contour
-        - 'center': (cx, cy)     — center coordinates of the bounding box
-        - 'area':   float        — area of the detected contour
+        self.COLOR_RANGES = {
+            "red": [
+                (np.array([0, 100, 100]), np.array([10, 255, 255])),
+                (np.array([160, 100, 100]), np.array([179, 255, 255]))
+            ],
+            "green": [
+                (np.array([40, 100, 100]), np.array([80, 255, 255]))
+            ],
+            "blue": [
+                (np.array([100, 100, 100]), np.array([140, 255, 255]))
+            ],
+            "yellow": [
+                (np.array([20, 100, 100]), np.array([35, 255, 255]))
+            ]
+        }
 
-    Optionally, if you attempt the bonus task:
-        - 'shape':  str          — one of 'circle', 'triangle', 'rectangle'
-    """
+    def detect(self, image: np.ndarray):
+    
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        detections = []
 
-    # Define HSV color ranges for each target color.
-    # Each entry maps a color name to a list of (lower_bound, upper_bound) tuples.
-    # Use np.array([H, S, V]) for bounds. OpenCV uses H: 0-179, S: 0-255, V: 0-255.
-    #
-    # Hint: Red wraps around the hue spectrum (both ~0-10 and ~170-179 are red),
-    # so you will likely need TWO ranges for red.
-    COLOR_RANGES = {
-        # Example format:
-        # "green": [(np.array([35, 80, 80]), np.array([85, 255, 255]))],
-    }
+        for color_name, ranges in self.COLOR_RANGES.items():
+            mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+            
+        
+            for lower, upper in ranges:
+                color_mask = cv2.inRange(hsv, lower, upper)
+                mask = cv2.bitwise_or(mask, color_mask)
+            
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
 
-    # Minimum contour area to consider (filters noise)
-    min_area = 500
+                if area > self.min_area:
+                    x, y, w, h = cv2.boundingRect(cnt)
+                    cx = int(x + w / 2)
+                    cy = int(y + h / 2)
+                    
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
-        """
-        Detect colored markers in the given BGR image.
+                    peri = cv2.arcLength(cnt, True)
+                    approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
+                    vertices = len(approx)
+                    
+                    shape = "circle"
+                    if vertices == 3:
+                        shape = "triangle"
+                    elif vertices == 4:
+                        shape = "rectangle"
+                    
+                    detections.append({
+                        "color": color_name,
+                        "bbox": (x, y, w, h),
+                        "center": (cx, cy),
+                        "area": area,
+                        "shape": shape
+                    })
+                    
+        return detections
 
-        Args:
-            image: Input image in BGR format (as loaded by cv2.imread).
+def compute_iou(box_a, box_b):
+    xa, ya, wa, ha = box_a
+    xb, yb, wb, hb = box_b
+    
+    inter_x1 = max(xa, xb)
+    inter_y1 = max(ya, yb)
+    inter_x2 = min(xa + wa, xb + wb)
+    inter_y2 = min(ya + ha, yb + hb)
+    
+    inter_area = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
+    
+    if inter_area == 0:
+        return 0.0
+        
+    area_a = wa * ha
+    area_b = wb * hb
+    
+    iou = inter_area / float(area_a + area_b - inter_area)
+    return iou
 
-        Returns:
-            A list of detection dictionaries, each containing:
-            'color', 'bbox', 'center', and 'area' keys.
-        """
-        pass
-
-
-def compute_iou(box_a: Tuple, box_b: Tuple) -> float:
-    """
-    Compute Intersection over Union (IoU) between two bounding boxes.
-
-    Each box is represented as (x, y, w, h) where:
-        - (x, y) is the top-left corner
-        - (w, h) is the width and height
-
-    Args:
-        box_a: First bounding box as (x, y, w, h).
-        box_b: Second bounding box as (x, y, w, h).
-
-    Returns:
-        IoU value as a float between 0.0 (no overlap) and 1.0 (perfect overlap).
-    """
-    pass
-
-
-def filter_detections(
-    detections: List[Dict], iou_threshold: float = 0.5
-) -> List[Dict]:
-    """
-    Filter overlapping detections using Non-Maximum Suppression (NMS).
-
-    When two detections overlap (IoU > iou_threshold), keep the one with the
-    larger area and discard the other.
-
-    Args:
-        detections: List of detection dictionaries (each must have 'bbox' and 'area').
-        iou_threshold: IoU threshold above which two detections are considered overlapping.
-
-    Returns:
-        Filtered list of detections with overlapping duplicates removed.
-    """
-    pass
+def filter_detections(detections, iou_threshold):
+    sorted_detections = sorted(detections, key=lambda d: d['area'], reverse=True)
+    kept_detections = []
+    
+    for current_det in sorted_detections:
+        should_keep = True
+        
+        for kept_det in kept_detections:
+            iou = compute_iou(current_det['bbox'], kept_det['bbox'])
+            if iou > iou_threshold:
+                should_keep = False
+                break
+                
+        if should_keep:
+            kept_detections.append(current_det)
+            
+    return kept_detections
